@@ -30,7 +30,24 @@ def main():
     print("\nSending finding to the local AI model...")
     print("This may take a little while.\n")
 
-    analysis = analyse_finding(finding)
+    with open(
+        finding["file"],
+        "r",
+        encoding="utf-8",
+    ) as source_file:
+        source_lines = source_file.readlines()
+    line_number = finding["line"]
+
+    start = max(0, line_number - 4)
+    end = min(len(source_lines), line_number + 3)
+
+    source_context = "".join(
+        source_lines[start:end]
+    )
+    analysis = analyse_finding(
+      finding,
+      source_context=source_context,
+  )
 
     print("=" * 60)
     print("SIMHARA AI SECURITY ANALYSIS")

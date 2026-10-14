@@ -28,3 +28,6 @@ scan_report.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# Generated AI evaluation results
+evaluation_results/
