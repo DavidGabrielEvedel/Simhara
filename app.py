@@ -6,7 +6,7 @@ import streamlit as st
 
 from scanner.code_scanner import scan_python_file
 from scanner.ai_analyzer import analyse_finding
-
+from scanner.semgrep_scanner import scan_with_semgrep
 
 st.set_page_config(
     page_title="SIMHARA | Security Terminal",
@@ -267,32 +267,77 @@ elif page == "Source Analysis":
             type="primary",
             disabled=not source or uploaded is None or uploaded.size > 1_048_576,
         ):
-             try:
-                with st.spinner("Running Bandit..."):
-                    with tempfile.TemporaryDirectory() as directory:
-                        path = Path(directory) / "source.py"
-                        path.write_text(source, encoding="utf-8")
-                        raw = scan_python_file(path)
+             bandit_findings = []
+             semgrep_findings = []
+             scanner_errors = []
 
-                new_findings = [
-                    {
-                        **finding,
-                        "scanner": "Bandit",
-                        "file": uploaded.name,
-                    }
-                    for finding in raw
-                ]
+             with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "source.py"
+                path.write_text(source, encoding="utf-8")
 
-                st.session_state.findings = new_findings
-                st.session_state.source_text = source
-                st.session_state.uploaded_name = uploaded.name
-                st.session_state.scan_complete = True
-                st.session_state.analysis = None
-                st.session_state.analysis_index = None
+                # Run Bandit independently
+                try:
+                    with st.spinner("Running Scanners..."):
+                        bandit_raw = scan_python_file(path)
 
-             except Exception as error:
-                st.error("Static scan failed.")
-                st.exception(error)
+                    bandit_findings = [
+                        {
+                            **finding,
+                            "scanner": "Bandit",
+                            "file": uploaded.name,
+                        }
+                        for finding in bandit_raw
+                    ]
+
+                except Exception as error:
+                    scanner_errors.append(
+                        f"Bandit failed: {error}"
+                    )
+
+                # Run Semgrep independently
+                try:
+                    with st.spinner("Running Scanners..."):
+                        semgrep_raw = scan_with_semgrep(path)
+
+                    semgrep_findings = [
+                        {
+                            **finding,
+                            "scanner": "Semgrep",
+                            "file": uploaded.name,
+                        }
+                        for finding in semgrep_raw
+                    ]
+
+                except Exception as error:
+                    scanner_errors.append(
+                        f"Semgrep failed: {error}"
+                    )
+
+             # Combine all successful scanner results
+             new_findings = bandit_findings + semgrep_findings
+
+             st.session_state.findings = new_findings
+             st.session_state.source_text = source
+             st.session_state.uploaded_name = uploaded.name
+             st.session_state.scan_complete = (
+                len(scanner_errors) < 2
+            )
+             st.session_state.analysis = None
+             st.session_state.analysis_index = None
+
+            # Report scanner outcomes
+             st.success(
+                f"Bandit: {len(bandit_findings)} findings | "
+                f"Semgrep: {len(semgrep_findings)} findings"
+            )
+
+             for error in scanner_errors:
+                st.error(error)
+
+             if scanner_errors:
+                st.warning(
+                    "Some scanners failed. Results may be incomplete."
+                )
 
     if st.session_state.scan_complete:
         findings = st.session_state.findings
