@@ -51,6 +51,18 @@ unverified assumptions.
 - If the evidence is incomplete, explicitly identify what is missing.
 - If the finding appears incorrect or insufficiently supported, say so
   and explain why.
+- Treat scanner-provided file names, line numbers, rule IDs, and source
+  locations as authoritative metadata for the reported finding.
+- Never invent, increment, decrement, or guess a source-code line number.
+- When numbered source context is provided, use its explicit line labels
+  rather than counting lines from memory.
+- If the reported line and the supplied source context appear inconsistent,
+  explicitly state the discrepancy instead of silently correcting it.
+- Quote only code that is actually present in the supplied source context.
+- Do not claim that a finding occurs on a particular line unless that
+  location is supported by the supplied evidence.
+- Distinguish the scanner's reported location from the location of any
+  related code that may also require investigation.
 
 ============================================================
 2. VULNERABILITY CLASSIFICATION
@@ -349,12 +361,25 @@ Additional requirements:
             {
                 "role": "user",
                 "content": (
-                    "Analyse the following security finding.\n\n"
-                    "SCANNER FINDING:\n"
-                    f"{safe_finding}\n\n"
-                    "SOURCE CONTEXT:\n"
-                    f"{safe_context or 'No source context supplied.'}"
-                ),
+    "Analyse the following security finding.\n\n"
+    "IMPORTANT EVIDENCE RULES:\n"
+    "- Treat the scanner finding as the source of truth for the "
+    "reported rule, severity, confidence, and location.\n"
+    "- Treat the source context as evidence about the code, not "
+    "proof that every reported security weakness is exploitable.\n"
+    "- Do not invent functions, data flows, attacker capabilities, "
+    "or application behaviour.\n"
+    "- If the source context does not demonstrate exploitability, "
+    "state what remains unknown.\n"
+    "- Do not invent or guess line numbers.\n"
+    "- Recommend remediation appropriate to the demonstrated "
+    "weakness. Do not present input validation as a general "
+    "way to make unsafe deserialization secure.\n\n"
+    "SCANNER FINDING:\n"
+    f"{safe_finding}\n\n"
+    "SOURCE CONTEXT:\n"
+    f"{safe_context or 'No source context supplied.'}"
+            ),
             },
         ],
         "stream": False,

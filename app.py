@@ -187,7 +187,7 @@ with st.sidebar:
 
     st.divider()
     st.markdown("**SYSTEM CONFIGURATION**")
-    st.caption("SCANNER  /  BANDIT")
+    st.caption("SEMGREP  /  BANDIT")
     st.caption("AI ENGINE / OLLAMA")
     st.caption("MODE     /  LOCAL ANALYSIS")
     st.divider()
@@ -233,8 +233,8 @@ elif page == "Source Analysis":
     st.markdown('<div class="section">[ 01 / SOURCE INPUT ]</div>', unsafe_allow_html=True)
 
     uploaded = st.file_uploader(
-    "Select Python source file",
-    type=["py"],
+    "Select Source file",
+    type=["py", "java"],
     key="source_upload",
     )
 
@@ -272,46 +272,45 @@ elif page == "Source Analysis":
              scanner_errors = []
 
              with tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "source.py"
-                path.write_text(source, encoding="utf-8")
+                suffix = Path(uploaded.name).suffix.lower()
+                path = Path(directory) / f"source{suffix}"
+                path.write_bytes(uploaded.getvalue())
 
-                # Run Bandit independently
-                try:
-                    with st.spinner("Running Scanners..."):
-                        bandit_raw = scan_python_file(path)
+    # Python: run Bandit and Semgrep.
+    # Java/C/C++: run Semgrep only.
+                if suffix == ".py":
+                    try:
+                        with st.spinner("Running Scanners..."):
+                            bandit_raw = scan_python_file(path)
 
-                    bandit_findings = [
-                        {
-                            **finding,
-                            "scanner": "Bandit",
-                            "file": uploaded.name,
-                        }
-                        for finding in bandit_raw
-                    ]
+                        bandit_findings = [
+                {
+                    **finding,
+                    "scanner": "Bandit",
+                    "file": uploaded.name,
+                }
+                for finding in bandit_raw
+            ]
 
-                except Exception as error:
-                    scanner_errors.append(
-                        f"Bandit failed: {error}"
-                    )
+                    except Exception as error:
+                        scanner_errors.append(f"Bandit failed: {error}")
 
-                # Run Semgrep independently
+    # Semgrep supports multiple programming languages.
                 try:
                     with st.spinner("Running Scanners..."):
                         semgrep_raw = scan_with_semgrep(path)
 
                     semgrep_findings = [
-                        {
-                            **finding,
-                            "scanner": "Semgrep",
-                            "file": uploaded.name,
-                        }
+            {
+                **finding,
+                "scanner": "Semgrep",
+                "file": uploaded.name,
+            }
                         for finding in semgrep_raw
-                    ]
+        ]
 
                 except Exception as error:
-                    scanner_errors.append(
-                        f"Semgrep failed: {error}"
-                    )
+                    scanner_errors.append(f"Semgrep failed: {error}")
 
              # Combine all successful scanner results
              new_findings = bandit_findings + semgrep_findings
@@ -319,6 +318,7 @@ elif page == "Source Analysis":
              st.session_state.findings = new_findings
              st.session_state.source_text = source
              st.session_state.uploaded_name = uploaded.name
+             
              st.session_state.scan_complete = (
                 len(scanner_errors) < 2
             )
@@ -326,10 +326,15 @@ elif page == "Source Analysis":
              st.session_state.analysis_index = None
 
             # Report scanner outcomes
-             st.success(
-                f"Bandit: {len(bandit_findings)} findings | "
-                f"Semgrep: {len(semgrep_findings)} findings"
-            )
+             if suffix == ".py":
+                st.success(
+                    f"Bandit: {len(bandit_findings)} findings | "
+                    f"Semgrep: {len(semgrep_findings)} findings"
+                )
+             else:
+                st.success(
+                    f"Semgrep: {len(semgrep_findings)} findings"
+                )
 
              for error in scanner_errors:
                 st.error(error)
@@ -402,36 +407,64 @@ elif page == "Source Analysis":
                 if isinstance(line, int) and 1 <= line <= len(lines):
                     start = max(0, line - 4)
                     end = min(len(lines), line + 3)
+
                     excerpt = "\n".join(
-                     f"{i + 1}: {lines[i]}"
-                     for i in range(start, end)
-)
+                        f"{i + 1}: {lines[i]}"
+                        for i in range(start, end)
+     )
+
+                    st.caption(f"REPORTED LOCATION: LINE {finding.get('line')}")
                     st.code(excerpt, language="python")
+
+                    st.caption("The reported location is where the scanner detected a pattern. It does not, by itself, prove exploitability.")
+
                 else:
-                    st.warning(f"Invalid scanner line: {line}. Showing full source.")
-                    st.code(st.session_state.source_text, language="python")
+                    st.warning(
+                        f"Invalid scanner line: {finding.get('line')}. Showing full source."
+                    )
+                    st.code(
+                        st.session_state.source_text,
+                        language="python",
+                    )
 
             with right:
                 st.markdown("### AI ANALYSIS")
                 st.write("Analyse this finding with the configured local model.")
 
                 if st.button("ANALYSE FINDING", type="primary"):
-                    line = finding.get("line")
                     lines = st.session_state.source_text.splitlines()
 
-                    if isinstance(line, int) and line > 0:
-                        start = max(0, line - 4)
-                        end = min(len(lines), line + 3)
+                    # Provide the complete source for small files.
+                    # For larger files, use a wider excerpt around the finding.
+                    if len(st.session_state.source_text) <= 6000:
                         context = "\n".join(
-                            f"{i+1}: {lines[i]}" for i in range(start, end)
+                            f"{i + 1}: {line}"
+                            for i, line in enumerate(lines)
                         )
                     else:
-                        context = st.session_state.source_text[:6000]
+                        line = finding.get("line")
+
+                        if (
+                            isinstance(line, int)
+                            and 1 <= line <= len(lines)
+                        ):
+                            start = max(0, line - 15)
+                            end = min(len(lines), line + 15)
+
+                            context = "\n".join(
+                                f"{i + 1}: {lines[i]}"
+                                for i in range(start, end)
+                            )
+                        else:
+                            context = st.session_state.source_text[:6000]
 
                     try:
                         with st.spinner("Consulting local model..."):
                             result = analyse_finding(
-                                {**finding, "file": st.session_state.uploaded_name},
+                                {
+                                    **finding,
+                                    "file": st.session_state.uploaded_name,
+                                },
                                 source_context=context,
                             )
 
@@ -440,7 +473,7 @@ elif page == "Source Analysis":
 
                     except Exception as error:
                         st.error("AI analysis failed.")
-                        st.code(str(error))
+                        st.code(str(error))                
 
             result = st.session_state.analysis
 
