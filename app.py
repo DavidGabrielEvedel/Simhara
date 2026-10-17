@@ -7,6 +7,8 @@ from scanner.trivy_scanner import run_trivy_scan
 from scanner.code_scanner import scan_python_file
 from scanner.ai_analyzer import analyse_finding
 from scanner.semgrep_scanner import scan_with_semgrep
+from scanner.nmap_scanner import run_nmap_scan, SCAN_PROFILES
+from scanner.web_checks import check_tls, check_headers, check_dns
 
 st.set_page_config(
     page_title="SIMHARA | Security Terminal",
@@ -649,76 +651,324 @@ elif page == "Source Analysis":
 
 
 elif page == "Scan Operations":
+
     st.markdown(
-        '<div class="section">[ EXTERNAL SECURITY SCANNING ]</div>',
+        '<div class="section">[ SECURITY ASSESSMENT ]</div>',
         unsafe_allow_html=True,
     )
 
-    st.caption(
-        "SIMHARA // TRIVY SECURITY ENGINE"
+    st.caption("SIMHARA // UNIFIED SECURITY OPERATIONS")
+
+    st.markdown("#### TARGET CONFIGURATION")
+
+    target_type = st.selectbox(
+        "TARGET TYPE",
+        options=[
+            "Website / Host",
+            "Local Project",
+        ],
     )
 
-    target_path = st.text_input(
-        "TARGET DIRECTORY OR FILE",
-        value=".",
-        help="Enter a local file or directory path to scan.",
-    )
+    if target_type == "Website / Host":
 
-    scan_type = st.selectbox(
-        "SCAN TYPE",
-        options=["secret", "vuln"],
-        format_func=lambda value: {
-            "secret": "SECRET DETECTION",
-            "vuln": "DEPENDENCY VULNERABILITIES",
-        }[value],
-    )
+        target = st.text_input(
+            "TARGET URL, IP ADDRESS OR HOSTNAME",
+            value="127.0.0.1",
+            help="Use only systems you own or are authorised to assess.",
+        )
+
+        st.caption(
+            "Network operations currently support IP addresses and hostnames. "
+            "Web, API, TLS and DNS checks will be added next."
+        )
+
+    else:
+
+        target = st.text_input(
+            "LOCAL PROJECT DIRECTORY OR FILE",
+            value=".",
+            help="Enter a local file or directory path.",
+        )
+
+        st.caption(
+            "Local project operations inspect files accessible on this machine."
+        )
+
+    st.markdown("#### SELECT SECURITY OPERATIONS")
+
+    if target_type == "Website / Host":
+
+        network_discovery = st.checkbox(
+            "Network & Service Discovery",
+            help="Identify open TCP ports and detected services using Nmap.",
+        )
+
+        firewall_analysis = st.checkbox(
+            "Firewall & Filtering Analysis",
+            help="Examine TCP port states and possible network filtering.",
+        )
+
+        tls_assessment = st.checkbox(
+            "TLS / HTTPS Assessment",
+            help="Check HTTPS certificates and TLS connections.",
+            )
+
+        header_assessment = st.checkbox(
+            "HTTP Security Headers",
+            help="Check for common HTTP security headers.",
+            )
+
+        dns_assessment = st.checkbox(
+            "DNS Security Checks",
+            help="Resolve hostnames and attempt reverse DNS lookups.",
+            
+        )
+
+        web_assessment = st.checkbox(
+            "Web Application Security",
+            help="Dynamic web application testing using OWASP ZAP. Integration pending.",
+            
+        )
+
+        api_assessment = st.checkbox(
+            "API Security Assessment",
+            help="Test supported API specifications using OWASP ZAP. Integration pending.",
+            
+        )
+
+        selected_operations = []
+
+        if network_discovery:
+            selected_operations.append("Network & Service Discovery")
+
+        if firewall_analysis:
+            selected_operations.append("Firewall & Filtering Analysis")
+
+        if tls_assessment:
+            selected_operations.append("TLS / HTTPS Assessment")
+
+        if header_assessment:
+            selected_operations.append("HTTP Security Headers")
+
+        if dns_assessment:
+            selected_operations.append("DNS Security Checks")
+        # These operations become selectable after their integrations
+        # have been implemented and tested.
+
+    else:
+
+        secret_detection = st.checkbox(
+            "Exposed Secret Detection",
+            help="Search supported files for potential exposed credentials.",
+        )
+
+        dependency_audit = st.checkbox(
+            "Dependency Vulnerability Audit",
+            help="Check supported dependency files for known vulnerabilities.",
+        )
+
+        configuration_audit = st.checkbox(
+            "Configuration Security Audit",
+            help="Inspect supported configuration files. Integration pending.",
+            disabled=True,
+        )
+
+        container_audit = st.checkbox(
+            "Container Security Audit",
+            help="Assess a supported container image. Integration pending.",
+            disabled=True,
+        )
+
+        selected_operations = []
+
+        if secret_detection:
+            selected_operations.append("Exposed Secret Detection")
+
+        if dependency_audit:
+            selected_operations.append("Dependency Vulnerability Audit")
 
     st.warning(
-        "Only scan files and directories you are authorised to assess."
+        "Run scans only against systems and files you are authorised to assess."
     )
 
-    if st.button("EXECUTE TRIVY SCAN", type="primary"):
-        with st.spinner("TRIVY ENGINE RUNNING..."):
-            result = run_trivy_scan(
-                target_path=target_path,
-                scan_type=scan_type,
-            )
+    st.markdown("#### EXECUTION")
 
-        if not result["success"]:
-            st.error("SCAN FAILED")
-            st.code(result["error"])
+    if st.button("RUN SELECTED OPERATIONS", type="primary"):
+
+        if not selected_operations:
+            st.warning("Select at least one available security operation.")
 
         else:
-            findings = result["findings"]
 
-            st.success("SCAN COMPLETED")
+            combined_findings = []
+            operation_results = []
 
-            st.metric(
-                "FINDINGS DETECTED",
-                len(findings),
+            progress = st.progress(0)
+
+            for index, operation in enumerate(selected_operations):
+
+                st.write(f"EXECUTING: {operation}")
+
+                try:
+
+                    if operation == "Exposed Secret Detection":
+
+                        with st.spinner("TRIVY SECRET SCAN RUNNING..."):
+                            result = run_trivy_scan(
+                                target_path=target,
+                                scan_type="secret",
+                            )
+
+                    elif operation == "Dependency Vulnerability Audit":
+
+                        with st.spinner("TRIVY DEPENDENCY SCAN RUNNING..."):
+                            result = run_trivy_scan(
+                                target_path=target,
+                                scan_type="vuln",
+                            )
+
+                    elif operation == "Network & Service Discovery":
+
+                        with st.spinner("NMAP DISCOVERY RUNNING..."):
+                            result = run_nmap_scan(
+                                target=target,
+                                profile="Network & Service Discovery",
+                            )
+
+                    elif operation == "Firewall & Filtering Analysis":
+
+                        with st.spinner("NMAP FILTERING ANALYSIS RUNNING..."):
+                            result = run_nmap_scan(
+                                target=target,
+                                profile="Firewall & Filtering Analysis",
+                            )
+                    elif operation == "TLS / HTTPS Assessment":
+
+                        with st.spinner("TLS ASSESSMENT RUNNING..."):
+                            result = check_tls(target)
+
+                    elif operation == "HTTP Security Headers":
+
+                        with st.spinner("HTTP HEADER CHECK RUNNING..."):
+                            result = check_headers(target)
+
+                    elif operation == "DNS Security Checks":
+
+                        with st.spinner("DNS CHECK RUNNING..."):
+                            result = check_dns(target)
+
+                    else:
+                        result = {
+                            "success": False,
+                            "error": "Operation is not implemented.",
+                            "findings": [],
+                        }
+
+                    operation_record = {
+                        "operation": operation,
+                        "success": result["success"],
+                        "error": result.get("error"),
+                        "finding_count": len(result.get("findings", [])),
+                    }
+
+                    operation_results.append(operation_record)
+
+                    if result["success"]:
+
+                        for finding in result.get("findings", []):
+                            finding = dict(finding)
+                            finding["operation"] = operation
+                            combined_findings.append(finding)
+
+                        st.success(
+                            f"{operation}: completed — "
+                            f"{operation_record['finding_count']} observations."
+                        )
+
+                    else:
+                        st.error(f"{operation}: failed.")
+                        st.code(result.get("error") or "Unknown scanner error.")
+
+                except Exception as error:
+
+                    operation_results.append({
+                        "operation": operation,
+                        "success": False,
+                        "error": str(error),
+                        "finding_count": 0,
+                    })
+
+                    st.error(f"{operation}: failed unexpectedly.")
+                    st.code(str(error))
+
+                progress.progress((index + 1) / len(selected_operations))
+
+            completed = sum(
+                1 for item in operation_results if item["success"]
             )
 
-            if findings:
+            failed = len(operation_results) - completed
+
+            st.divider()
+            st.markdown("#### ASSESSMENT SUMMARY")
+
+            col1, col2, col3 = st.columns(3)
+
+            col1.metric("OPERATIONS SELECTED", len(selected_operations))
+            col2.metric("COMPLETED", completed)
+            col3.metric("FAILED", failed)
+
+            st.metric("TOTAL OBSERVATIONS", len(combined_findings))
+
+            report = {
+                "product": "SIMHARA",
+                "target": target,
+                "target_type": target_type,
+                "selected_operations": selected_operations,
+                "operation_results": operation_results,
+                "findings": combined_findings,
+                "summary": {
+                    "operations_selected": len(selected_operations),
+                    "operations_completed": completed,
+                    "operations_failed": failed,
+                    "total_observations": len(combined_findings),
+                },
+                "interpretation_note": (
+                    "Scanner observations are not automatically confirmed "
+                    "vulnerabilities. Review the evidence and scanner context."
+                ),
+            }
+
+            if combined_findings:
+
+                st.markdown("#### FINDINGS")
+
                 st.dataframe(
-                    findings,
+                    combined_findings,
                     use_container_width=True,
                     hide_index=True,
                 )
 
-                st.download_button(
-                    "EXPORT FINDINGS (JSON)",
-                    data=json.dumps(findings, indent=2),
-                    file_name="simhara_trivy_findings.json",
-                    mime="application/json",
-                )
+            elif completed > 0:
 
-            else:
                 st.info(
-                    "No findings reported by Trivy. "
+                    "No findings were returned by the completed operations. "
                     "This does not guarantee that the target is secure."
                 )
 
+            st.download_button(
+                "DOWNLOAD ASSESSMENT (JSON)",
+                data=json.dumps(report, indent=2),
+                file_name="simhara_security_assessment.json",
+                mime="application/json",
+            )
+
+            if failed:
+                st.warning(
+                    "Some operations failed. Review their errors in the "
+                    "operation results before interpreting this assessment."
+                )
+
     st.caption(
-        "Trivy findings are scanner output and require investigation "
-        "before being treated as confirmed vulnerabilities."
+        "SIMHARA // MULTI-ENGINE ASSESSMENT // EVIDENCE-BASED REPORTING"
     )
