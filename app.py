@@ -3,12 +3,14 @@ import tempfile
 from pathlib import Path
 import pandas as pd
 import streamlit as st
-from scanner.trivy_scanner import run_trivy_scan
+from scanner.trivy_scanner import (run_trivy_scan, run_trivy_container_scan,)
 from scanner.code_scanner import scan_python_file
 from scanner.ai_analyzer import analyse_finding
 from scanner.semgrep_scanner import scan_with_semgrep
 from scanner.nmap_scanner import run_nmap_scan, SCAN_PROFILES
 from scanner.web_checks import check_tls, check_headers, check_dns
+from scanner.wapiti_scanner import run_wapiti_scan
+from scanner.wapiti_scanner import run_wapiti_api_scan
 
 st.set_page_config(
     page_title="SIMHARA | Security Terminal",
@@ -674,12 +676,14 @@ elif page == "Scan Operations":
         target = st.text_input(
             "TARGET URL, IP ADDRESS OR HOSTNAME",
             value="127.0.0.1",
-            help="Use only systems you own or are authorised to assess.",
+            help=("For web assessments, include http:// or https://. "
+        "For network assessments, use an IP address or hostname. "
+        "Only assess systems you are authorized to test."),
         )
 
         st.caption(
-            "Network operations currently support IP addresses and hostnames. "
-            "Web, API, TLS and DNS checks will be added next."
+            "Network discovery, firewall analysis, TLS, HTTP headers, DNS, "
+            "web application, and API assessments are available."
         )
 
     else:
@@ -726,15 +730,23 @@ elif page == "Scan Operations":
 
         web_assessment = st.checkbox(
             "Web Application Security",
-            help="Dynamic web application testing using OWASP ZAP. Integration pending.",
+            help="Crawl the target and assess common web application security issues.",
             
         )
 
         api_assessment = st.checkbox(
             "API Security Assessment",
-            help="Test supported API specifications using OWASP ZAP. Integration pending.",
+            help="Test supported API specifications.",
             
         )
+        openapi_spec = ""
+
+        if api_assessment:  
+            openapi_spec = st.text_input(
+                "OPENAPI / SWAGGER SPECIFICATION URL",
+                placeholder="https://your-authorized-api.example/openapi.json",
+                help="Enter the specification URL for an API you are authorized to test.",
+    )
 
         selected_operations = []
 
@@ -752,9 +764,10 @@ elif page == "Scan Operations":
 
         if dns_assessment:
             selected_operations.append("DNS Security Checks")
-        # These operations become selectable after their integrations
-        # have been implemented and tested.
-
+        if web_assessment:
+            selected_operations.append("Web Application Security")
+        if api_assessment:
+            selected_operations.append("API Security Assessment")
     else:
 
         secret_detection = st.checkbox(
@@ -769,16 +782,21 @@ elif page == "Scan Operations":
 
         configuration_audit = st.checkbox(
             "Configuration Security Audit",
-            help="Inspect supported configuration files. Integration pending.",
-            disabled=True,
+            help="Inspect supported configuration files.",
         )
 
         container_audit = st.checkbox(
             "Container Security Audit",
-            help="Assess a supported container image. Integration pending.",
-            disabled=True,
+            help="Scan a container image for operating-system and library vulnerabilities",
         )
+        container_image = ""
 
+        if container_audit:
+            container_image = st.text_input(
+                "CONTAINER IMAGE",
+                placeholder="alpine:3.20",
+                help="Enter an image reference you are authorized to scan.",
+)
         selected_operations = []
 
         if secret_detection:
@@ -786,7 +804,11 @@ elif page == "Scan Operations":
 
         if dependency_audit:
             selected_operations.append("Dependency Vulnerability Audit")
-
+        if configuration_audit:
+            selected_operations.append("Configuration Security Audit")
+        if container_audit:
+            selected_operations.append("Container Security Audit")
+            
     st.warning(
         "Run scans only against systems and files you are authorised to assess."
     )
@@ -799,7 +821,21 @@ elif page == "Scan Operations":
             st.warning("Select at least one available security operation.")
 
         else:
+            from urllib.parse import urlparse
 
+            raw_target = target.strip()
+
+            if target_type == "Website / Host":
+                if "://" in raw_target:
+                    parsed_target = urlparse(raw_target)
+                    scan_host = parsed_target.hostname or raw_target
+                    scan_url = raw_target
+                else:
+                    scan_host = raw_target
+                    scan_url = f"http://{raw_target}"
+            else:
+                scan_host = raw_target
+                scan_url = raw_target
             combined_findings = []
             operation_results = []
 
@@ -826,12 +862,35 @@ elif page == "Scan Operations":
                                 target_path=target,
                                 scan_type="vuln",
                             )
+                            
+                    elif operation == "Configuration Security Audit":
+
+                        with st.spinner("TRIVY CONFIGURATION AUDIT RUNNING..."):
+                            result = run_trivy_scan(
+                                target_path=target,
+                                scan_type="misconfig",
+                            )
+                            
+                    elif operation == "Container Security Audit":
+
+                        if not container_image.strip():
+                            result = {
+                                "success": False,
+                                "error": "A container image reference is required.",
+                                "findings": [],
+                            }
+                        else:
+                            with st.spinner("TRIVY CONTAINER SECURITY AUDIT RUNNING..."):
+                                result = run_trivy_container_scan(
+                                    image=container_image,
+                                )
+                            
 
                     elif operation == "Network & Service Discovery":
 
                         with st.spinner("NMAP DISCOVERY RUNNING..."):
                             result = run_nmap_scan(
-                                target=target,
+                                target=scan_host,
                                 profile="Network & Service Discovery",
                             )
 
@@ -839,23 +898,55 @@ elif page == "Scan Operations":
 
                         with st.spinner("NMAP FILTERING ANALYSIS RUNNING..."):
                             result = run_nmap_scan(
-                                target=target,
+                                target=scan_host,
                                 profile="Firewall & Filtering Analysis",
                             )
                     elif operation == "TLS / HTTPS Assessment":
 
                         with st.spinner("TLS ASSESSMENT RUNNING..."):
-                            result = check_tls(target)
+                            result = check_tls(scan_url)
 
                     elif operation == "HTTP Security Headers":
 
                         with st.spinner("HTTP HEADER CHECK RUNNING..."):
-                            result = check_headers(target)
+                            result = check_headers(scan_url)
 
                     elif operation == "DNS Security Checks":
 
                         with st.spinner("DNS CHECK RUNNING..."):
-                            result = check_dns(target)
+                            result = check_dns(scan_host)
+                    elif operation == "Web Application Security":
+
+                        with st.spinner("WAPITI WEB APPLICATION SCAN RUNNING..."):
+                            result = run_wapiti_scan(
+                                target=scan_url,
+                                max_scan_time=60,
+                                max_attack_time=10,
+                            )
+
+                        result["success"] = result.get("status") in (
+                            "completed",
+                            "completed_with_warnings",
+                        )
+                    elif operation == "API Security Assessment":
+
+                        if not openapi_spec.strip():
+                            result = {
+                                "success": False,
+                                "error": (
+                                    "An OpenAPI/Swagger specification URL is required."
+                        ),
+                                "findings": [],
+        }
+
+                        else:
+                            with st.spinner("WAPITI API SECURITY ASSESSMENT RUNNING..."):
+                                result = run_wapiti_api_scan(
+                                    target=scan_url,
+                                    openapi_spec=openapi_spec,
+                                    max_scan_time=60,
+                                    max_attack_time=10,
+            )
 
                     else:
                         result = {
