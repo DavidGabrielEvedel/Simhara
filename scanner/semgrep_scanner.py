@@ -42,7 +42,13 @@ def scan_with_semgrep(file_path):
     for item in output.get("results", []):
         extra = item.get("extra", {})
         start = item.get("start", {})
+        metadata = extra.get("metadata", {})
+        cwe_data = metadata.get("cwe", [])
 
+        if isinstance(cwe_data, str):
+            cwe_data = [cwe_data]
+
+        cwe_value = ", ".join(cwe_data) if cwe_data else "Not mapped"
         findings.append({
             "scanner": "Semgrep",
             "rule_id": item.get("check_id", "UNKNOWN"),
@@ -55,7 +61,7 @@ def scan_with_semgrep(file_path):
             "confidence": "MEDIUM",
             "file": str(file_path),
             "line": start.get("line"),
-            "cwe": None,
+            "cwe": cwe_value,
             "evidence": extra.get("lines", ""),
         })
 

@@ -1,7 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
-
+import pandas as pd
 import streamlit as st
 
 from scanner.code_scanner import scan_python_file
@@ -234,7 +234,7 @@ elif page == "Source Analysis":
 
     uploaded = st.file_uploader(
     "Select Source file",
-    type=["py", "java"],
+    type=["py", "java", "js", "jsx", "ts", "tsx"],
     key="source_upload",
     )
 
@@ -257,7 +257,16 @@ elif page == "Source Analysis":
                 st.caption(f"FILE: {uploaded.name} | LINES: {len(source.splitlines())}")
 
                 with st.expander("VIEW SOURCE"):
-                    st.code(source, language="python")
+                    suffix=Path(uploaded.name).suffix.lower()
+                    language_map={
+                        ".py": "python",
+                        ".java": "java",
+                        ".js": "javascript",
+                        ".jsx": "javascript",
+                        ".ts": "typescript",
+                        ".tsx": "typescript",
+                    }
+                    st.code(source, language=language_map.get(suffix, "text"))
 
             except UnicodeDecodeError:
                 st.error("File must contain valid UTF-8 text.")
@@ -354,27 +363,166 @@ elif page == "Source Analysis":
         b.metric("HIGH", sum(f.get("severity") == "HIGH" for f in findings))
         c.metric("MEDIUM", sum(f.get("severity") == "MEDIUM" for f in findings))
         d.metric("LOW", sum(f.get("severity") == "LOW" for f in findings))
+        
+        st.markdown(
+            """
+            <style>
+            .severity-row {
+                display: flex;
+                align-items: center;
+                gap: 14px;
+                margin: 13px 0;
+                font-family: 'IBM Plex Mono', monospace;
+                font-size: 13px;
+            }
 
+            .severity-label {
+                width: 85px;
+                color: #d5e4d2;
+            }
+
+            .severity-track {
+                flex: 1;
+                height: 12px;
+                background: #101711;
+                border: 1px solid #29452b;
+            }
+
+            .severity-fill {
+                height: 100%;
+            }
+
+            .severity-count {
+                width: 25px;
+                text-align: right;
+                color: #d5e4d2;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        max_count = max(
+            (sum(f.get("severity") == level for f in findings)
+             for level in ["HIGH", "MEDIUM", "LOW"]),
+            default=0,
+        )
+
+        st.markdown(
+            '<div class="section">[ SEVERITY DISTRIBUTION ]</div>',
+            unsafe_allow_html=True,
+        )
+
+        for level, color in [
+            ("HIGH", "#ff6666"),
+            ("MEDIUM", "#f2d35e"),
+            ("LOW", "#9dff65"),
+        ]:
+            count = sum(f.get("severity") == level for f in findings)
+            width = (count / max_count * 100) if max_count else 0
+
+            st.markdown(
+                f"""
+                <div class="severity-row">
+                    <div class="severity-label">{level}</div>
+                    <div class="severity-track">
+                        <div class="severity-fill"
+                             style="width:{width}%;background:{color};">
+                        </div>
+                    </div>
+                    <div class="severity-count">{count}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
         if not findings:
             st.success("No findings reported by Bandit.")
             st.caption("A clean scan does not guarantee secure code.")
         else:
+            st.markdown(
+                '<div class="section">[ FILTER FINDINGS ]</div>',
+                unsafe_allow_html=True,
+            )
+
+            filter_col1, filter_col2 = st.columns(2)
+
+            severity_options = ["HIGH", "MEDIUM", "LOW"]
+
+            with filter_col1:
+                selected_severities = st.multiselect(
+                    "SEVERITY",
+                    options=severity_options,
+                    default=severity_options,
+                    key="severity_filter",
+                )
+
+            available_scanners = sorted({
+                f.get("scanner", "Unknown")
+                for f in findings
+            })
+
+            with filter_col2:
+                selected_scanners = st.multiselect(
+                    "SCANNER",
+                    options=available_scanners,
+                    default=available_scanners,
+                    key="scanner_filter",
+                )
+
+            filtered_findings = [
+                f for f in findings
+                if (
+                    not selected_severities
+                    or f.get("severity") in selected_severities
+                    )
+                and (
+                    not selected_scanners
+                    or f.get("scanner", "Unknown") in selected_scanners
+                )]
+            
+            st.caption(
+                f"DISPLAYING {len(filtered_findings)} OF {len(findings)} FINDINGS"
+            )
             st.dataframe(
                 [
                     {
-                        "SCANNER": f.get("scanner"),
-                        "RULE": f.get("rule_id"),
-                        "SEVERITY": f.get("severity"),
-                        "CONFIDENCE": f.get("confidence"),
-                        "LOCATION": f"{f.get('file')}:{f.get('line')}",
-                        "FINDING": f.get("title"),
-                        "CWE": f.get("cwe"),
+                      "SEVERITY": f.get("severity", "UNKNOWN"),
+                      "CWE": f.get("cwe") or "Not mapped",
+                      "VULNERABILITY": f.get("title", "Potential security issue"),
+                      "CONFIDENCE": f.get("confidence", "Unknown"),
+                      "SCANNER": f.get("scanner", "Unknown"),
+                      "RULE": f.get("rule_id", "UNKNOWN"),   
                     }
-                    for f in findings
+                    for f in filtered_findings
                 ],
                 use_container_width=True,
                 hide_index=True,
             )
+                        
+            if filtered_findings:
+                export_data = [
+                    {
+                        "SEVERITY": f.get("severity", "UNKNOWN"),
+                        "VULNERABILITY": f.get("title", ""),
+                        "CWE": f.get("cwe") or "Not mapped",
+                        "LOCATION": f"{f.get('file', 'Unknown')}:{f.get('line', '?')}",
+                        "SCANNER": f.get("scanner", "Unknown"),
+                        "CONFIDENCE": f.get("confidence", "Unknown"),
+                        "RULE ID": f.get("rule_id", "UNKNOWN"),
+                    }
+                    for f in findings
+                ]
+
+                df = pd.DataFrame(export_data)
+
+                st.download_button(
+                    label="DOWNLOAD FINDINGS / CSV",
+                    data=df.to_csv(index=False).encode("utf-8"),
+                    file_name="simhara_findings.csv",
+                    mime="text/csv",
+                )
 
             st.markdown('<div class="section">[ 03 / INVESTIGATION ]</div>', unsafe_allow_html=True)
 
@@ -414,7 +562,7 @@ elif page == "Source Analysis":
      )
 
                     st.caption(f"REPORTED LOCATION: LINE {finding.get('line')}")
-                    st.code(excerpt, language="python")
+                    st.code(excerpt, language=language_map.get(Path(st.session_state.uploaded_name).suffix.lower(), "text"))
 
                     st.caption("The reported location is where the scanner detected a pattern. It does not, by itself, prove exploitability.")
 
@@ -424,7 +572,7 @@ elif page == "Source Analysis":
                     )
                     st.code(
                         st.session_state.source_text,
-                        language="python",
+                        language=language_map.get(Path(st.session_state.uploaded_name).suffix.lower(), "text"),
                     )
 
             with right:
