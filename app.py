@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 import pandas as pd
 import streamlit as st
-
+from scanner.trivy_scanner import run_trivy_scan
 from scanner.code_scanner import scan_python_file
 from scanner.ai_analyzer import analyse_finding
 from scanner.semgrep_scanner import scan_with_semgrep
@@ -182,7 +182,7 @@ with st.sidebar:
 
     page = st.radio(
         "NAVIGATION",
-        ["Overview", "Source Analysis", "Evaluations"],
+        ["Overview", "Source Analysis", "Scan Operations"],
     )
 
     st.divider()
@@ -648,32 +648,77 @@ elif page == "Source Analysis":
                 st.caption("AI-generated recommendations are not verified security fixes.")
 
 
-elif page == "Evaluations":
-    st.markdown('<div class="section">[ MODEL EVALUATION RECORDS ]</div>', unsafe_allow_html=True)
+elif page == "Scan Operations":
+    st.markdown(
+        '<div class="section">[ EXTERNAL SECURITY SCANNING ]</div>',
+        unsafe_allow_html=True,
+    )
 
-    directory = Path("evaluation_results")
-    reports = sorted(
-        directory.glob("evaluation_*.json"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    ) if directory.exists() else []
+    st.caption(
+        "SIMHARA // TRIVY SECURITY ENGINE"
+    )
 
-    if not reports:
-        st.info("No saved evaluation reports found.")
-    else:
-        report = st.selectbox("SELECT REPORT", reports, format_func=lambda p: p.name)
+    target_path = st.text_input(
+        "TARGET DIRECTORY OR FILE",
+        value=".",
+        help="Enter a local file or directory path to scan.",
+    )
 
-        try:
-            st.json(json.loads(report.read_text(encoding="utf-8")))
-        except (OSError, ValueError) as error:
-            st.error("Could not read evaluation report.")
-            st.code(str(error))
+    scan_type = st.selectbox(
+        "SCAN TYPE",
+        options=["secret", "vuln"],
+        format_func=lambda value: {
+            "secret": "SECRET DETECTION",
+            "vuln": "DEPENDENCY VULNERABILITIES",
+        }[value],
+    )
 
-        st.caption("Saved model output is not proof of remediation correctness.")
+    st.warning(
+        "Only scan files and directories you are authorised to assess."
+    )
 
+    if st.button("EXECUTE TRIVY SCAN", type="primary"):
+        with st.spinner("TRIVY ENGINE RUNNING..."):
+            result = run_trivy_scan(
+                target_path=target_path,
+                scan_type=scan_type,
+            )
 
-st.divider()
-st.markdown(
-    '<div class="terminal-subtitle">SIMHARA // STATIC ANALYSIS • LOCAL AI • EVIDENCE-BASED INVESTIGATION</div>',
-    unsafe_allow_html=True,
-)
+        if not result["success"]:
+            st.error("SCAN FAILED")
+            st.code(result["error"])
+
+        else:
+            findings = result["findings"]
+
+            st.success("SCAN COMPLETED")
+
+            st.metric(
+                "FINDINGS DETECTED",
+                len(findings),
+            )
+
+            if findings:
+                st.dataframe(
+                    findings,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                st.download_button(
+                    "EXPORT FINDINGS (JSON)",
+                    data=json.dumps(findings, indent=2),
+                    file_name="simhara_trivy_findings.json",
+                    mime="application/json",
+                )
+
+            else:
+                st.info(
+                    "No findings reported by Trivy. "
+                    "This does not guarantee that the target is secure."
+                )
+
+    st.caption(
+        "Trivy findings are scanner output and require investigation "
+        "before being treated as confirmed vulnerabilities."
+    )
